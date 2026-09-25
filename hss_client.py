@@ -79,20 +79,16 @@ def main() -> None:
     parser.add_argument("--port", type=int, default=8765, help="TCP port")
     args = parser.parse_args()
 
+    host = args.host or input("HSS server IP address: ").strip()
+    if not host:
+        raise SystemExit("A server IP address is required.")
     token = read_token()
     retry_delay = 1.0
     while True:
         connection = None
         reader = None
         try:
-            host = args.host
-            if not host:
-                print("Searching for an HSS server on the local network...")
-                host, port = discover_server(args.port)
-            else:
-                port = args.port
-
-            connection = connect_and_authenticate(host, port, token)
+            connection = connect_and_authenticate(host, args.port, token)
             reader = connection.makefile("rb")
             print(f"Connected to {host}. Type PowerShell commands; use :quit to disconnect.")
             threading.Thread(target=receive_output, args=(reader,), daemon=True).start()

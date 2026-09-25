@@ -151,7 +151,7 @@ def main() -> None:
     token = read_token()
 
     print("HSS server starting. Use only on a private network you control.")
-    print(f"Listening on {args.host}:{args.port}; press Ctrl+C to stop.")
+    print(f"Listening on server address {args.host}:{args.port}; press Ctrl+C to stop.")
     with HssServer((args.host, args.port), token) as server, HssDiscoveryServer(
         (args.host, DISCOVERY_PORT), args.port
     ) as discovery_server:
