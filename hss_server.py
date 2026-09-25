@@ -17,6 +17,7 @@ import threading
 
 MAX_COMMAND_LENGTH = 8192
 MIN_TOKEN_LENGTH = 5
+DISCOVERY_PORT = 8766
 
 
 def read_token() -> str:
@@ -113,6 +114,25 @@ class HssRequestHandler(socketserver.StreamRequestHandler):
                 return
 
 
+class HssDiscoveryHandler(socketserver.BaseRequestHandler):
+    def handle(self) -> None:
+        message, discovery_socket = self.request
+        if message.decode("utf-8", errors="replace").strip() == "HSS_DISCOVER":
+            discovery_socket.sendto(
+                f"HSS/1 {self.server.tcp_port}\n".encode("utf-8"),
+                self.client_address,
+            )
+
+
+class HssDiscoveryServer(socketserver.ThreadingUDPServer):
+    allow_reuse_address = True
+    daemon_threads = True
+
+    def __init__(self, address: tuple[str, int], tcp_port: int):
+        self.tcp_port = tcp_port
+        super().__init__(address, HssDiscoveryHandler)
+
+
 class HssServer(socketserver.ThreadingTCPServer):
     allow_reuse_address = True
     daemon_threads = True
@@ -132,7 +152,12 @@ def main() -> None:
 
     print("HSS server starting. Use only on a private network you control.")
     print(f"Listening on {args.host}:{args.port}; press Ctrl+C to stop.")
-    with HssServer((args.host, args.port), token) as server:
+    with HssServer((args.host, args.port), token) as server, HssDiscoveryServer(
+        (args.host, DISCOVERY_PORT), args.port
+    ) as discovery_server:
+        discovery_thread = threading.Thread(target=discovery_server.serve_forever, daemon=True)
+        discovery_thread.start()
+        print(f"LAN discovery enabled on UDP port {DISCOVERY_PORT}.")
         try:
             server.serve_forever()
         except KeyboardInterrupt:
