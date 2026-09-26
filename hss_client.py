@@ -1,5 +1,5 @@
 """HSS client for connecting to an authorized HSS server."""  # Documents the purpose of this client module.
-
+##
 from __future__ import annotations  # Delays evaluation of type annotations until they are needed.
 
 import argparse  # Parses command-line options such as the server address and port.
