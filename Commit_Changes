@@ -3,3 +3,6 @@ git status
 git add -A
 git commit -m "Update HSS files and builds"
 git push origin main
+
+
+New-NetFirewallRule -DisplayName "HSS TCP 8765" -Direction Inbound -Protocol TCP -LocalPort 8765 -Action Allow -Profile Private -RemoteAddress 192.168.50.0/24
