@@ -15,6 +15,7 @@ DEFAULT_HOST = "0.0.0.0"
 DEFAULT_PORT = 8765
 DISCOVERY_PORT = 8766
 MAX_COMMAND_LENGTH = 8192
+REMOTE_CWD_MARKER = "__HSS_REMOTE_CWD__:"
 
 
 def ensure_firewall_rule(port: int) -> None:
@@ -88,6 +89,8 @@ class HssRequestHandler(socketserver.StreamRequestHandler):
 		if powershell.stdin is None or powershell.stdout is None or powershell.stderr is None:
 			powershell.kill()
 			return
+		powershell.stdin.write(f"Write-Output ('{REMOTE_CWD_MARKER}' + (Get-Location).Path)\n")
+		powershell.stdin.flush()
 
 		output_threads = [
 			threading.Thread(target=self.forward_output, args=(powershell.stdout, b"OUT "), daemon=True),
@@ -112,6 +115,7 @@ class HssRequestHandler(socketserver.StreamRequestHandler):
 				if not command:
 					continue
 				powershell.stdin.write(command + "\n")
+				powershell.stdin.write(f"Write-Output ('{REMOTE_CWD_MARKER}' + (Get-Location).Path)\n")
 				powershell.stdin.flush()
 		except (ConnectionAbortedError, ConnectionResetError, BrokenPipeError, OSError):
 			pass

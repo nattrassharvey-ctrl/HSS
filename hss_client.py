@@ -6,6 +6,7 @@ import argparse
 import ctypes
 import msvcrt
 import os
+from queue import Empty, Queue
 import socket
 import sys
 import threading
@@ -22,6 +23,7 @@ GREEN = "\033[92m"
 RED = "\033[91m"
 YELLOW = "\033[93m"
 RESET = "\033[0m"
+REMOTE_CWD_MARKER = "__HSS_REMOTE_CWD__:"
 
 
 def enable_terminal_colors() -> None:
@@ -43,8 +45,8 @@ def styled(text: str, color: str) -> str:
 	return f"{color}{text}{RESET}"
 
 
-def make_prompt() -> str:
-	return f"{styled('PS', BLUE)} {styled(os.getcwd(), CYAN)}{styled('>', BLUE)} "
+def make_prompt(remote_path: str) -> str:
+	return f"{styled('PS', BLUE)} {styled(remote_path, CYAN)}{styled('>', BLUE)} "
 
 
 class AuthenticationError(Exception):
@@ -72,14 +74,20 @@ def connect_and_authenticate(host: str, port: int, timeout: float = 10.0) -> soc
 		reader.close()
 
 
-def receive_output(reader: BinaryIO) -> None:
+def receive_output(reader: BinaryIO, cwd_updates: Queue[str]) -> None:
 	try:
 		for raw_line in reader:
 			line = raw_line.decode("utf-8", errors="replace")
 			if line.startswith("ERR "):
 				print(styled(line[4:].rstrip("\r\n"), RED), flush=True)
 			elif line.startswith("OUT "):
-				print(line[4:], end="", flush=True)
+				output = line[4:]
+				if output.startswith(REMOTE_CWD_MARKER):
+					cwd = output[len(REMOTE_CWD_MARKER):].rstrip("\r\n")
+					if cwd:
+						cwd_updates.put(cwd)
+				else:
+					print(output, end="", flush=True)
 			else:
 				print(line, end="", flush=True)
 	except OSError:
@@ -97,14 +105,23 @@ def run_client(host: str, port: int) -> None:
 			connection = connect_and_authenticate(host, port)
 			reader = connection.makefile("rb")
 			print(styled(f"Connected to {host}:{port}.", GREEN) + " Enter :quit to disconnect.")
-			threading.Thread(target=receive_output, args=(reader,), daemon=True).start()
+			cwd_updates: Queue[str] = Queue()
+			threading.Thread(target=receive_output, args=(reader, cwd_updates), daemon=True).start()
+			try:
+				remote_path = cwd_updates.get(timeout=10)
+			except Empty as error:
+				raise OSError("The server did not report the PowerShell working directory.") from error
 			retry_delay = 1.0
 
 			while True:
-				command = input(make_prompt())
+				command = input(make_prompt(remote_path))
 				connection.sendall((command + "\n").encode("utf-8"))
 				if command in {":quit", ":exit"}:
 					return
+				try:
+					remote_path = cwd_updates.get(timeout=60)
+				except Empty as error:
+					raise OSError("The server did not report the PowerShell working directory after the command.") from error
 		except AuthenticationError as error:
 			raise SystemExit(f"HSS authentication failed: {error}") from error
 		except (EOFError, KeyboardInterrupt):
