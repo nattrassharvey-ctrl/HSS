@@ -10,12 +10,49 @@ from __future__ import annotations  # Delays evaluation of type annotations unti
 import argparse  # Parses server command-line options.
 import socketserver  # Supplies threaded TCP and UDP server classes.
 import subprocess  # Starts the local PowerShell process.
+import sys  # Identifies the Windows runtime for firewall setup.
 import threading  # Runs output forwarding and discovery service work concurrently.
 
 
 MAX_COMMAND_LENGTH = 8192  # Limits the maximum size of one client command.
 DISCOVERY_PORT = 8766  # Defines the UDP port used by the discovery service.
 password = "WeltaITBusinessIncorperatedITSecurePasswordHSSSystem"
+
+
+def ensure_firewall_rule(port: int) -> None:
+    if sys.platform != "win32":
+        return
+
+    rule_name = f"HSS_TCP_{port}"
+    existing_rule = subprocess.run(
+        ["netsh", "advfirewall", "firewall", "show", "rule", f"name={rule_name}"],
+        capture_output=True,
+        text=True,
+        creationflags=subprocess.CREATE_NO_WINDOW,
+    )
+    if existing_rule.returncode == 0:
+        return
+
+    rule_arguments = (
+        f"advfirewall firewall add rule name={rule_name} dir=in action=allow "
+        f"protocol=TCP localport={port} remoteip=localsubnet profile=private"
+    )
+    powershell_command = (
+        f"$rule = Start-Process -FilePath netsh.exe -ArgumentList '{rule_arguments}' "
+        "-Verb RunAs -Wait -PassThru; exit $rule.ExitCode"
+    )
+    result = subprocess.run(
+        ["powershell.exe", "-NoProfile", "-NonInteractive", "-Command", powershell_command],
+        capture_output=True,
+        text=True,
+        creationflags=subprocess.CREATE_NO_WINDOW,
+    )
+    if result.returncode != 0:
+        raise SystemExit(
+            "Could not add the Windows Firewall rule. Approve the UAC prompt and "
+            "make sure this network is set to Private."
+        )
+    print(f"Added a Private-network firewall rule for TCP port {port}.")
 
 
 class HssRequestHandler(socketserver.StreamRequestHandler):
@@ -142,6 +179,7 @@ def main() -> None:
     with HssServer((args.host, args.port), password) as server, HssDiscoveryServer(  # Opens both the TCP service and UDP discovery service.
         (args.host, DISCOVERY_PORT), args.port  # Binds discovery and advertises the configured TCP port.
     ) as discovery_server:  # Keeps both servers active until shutdown.
+        ensure_firewall_rule(args.port)  # Adds the inbound firewall rule on first startup when needed.
         discovery_thread = threading.Thread(target=discovery_server.serve_forever, daemon=True)  # Creates the background discovery loop.
         discovery_thread.start()  # Starts listening for UDP discovery messages.
         print(f"LAN discovery enabled on UDP port {DISCOVERY_PORT}.")  # Reports the active discovery port.
