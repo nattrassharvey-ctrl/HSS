@@ -3,7 +3,11 @@
 from __future__ import annotations
 
 import argparse
+import ctypes
+import msvcrt
+import os
 import socket
+import sys
 import threading
 import time
 from typing import BinaryIO
@@ -12,6 +16,35 @@ from typing import BinaryIO
 PASSWORD = "WeltaITBusinessIncorperatedITSecurePasswordHSSSystem"
 DEFAULT_PORT = 8765
 MAX_RETRY_DELAY = 10.0
+BLUE = "\033[94m"
+CYAN = "\033[96m"
+GREEN = "\033[92m"
+RED = "\033[91m"
+YELLOW = "\033[93m"
+RESET = "\033[0m"
+
+
+def enable_terminal_colors() -> None:
+	if os.name != "nt" or not sys.stdout.isatty():
+		return
+	try:
+		handle = msvcrt.get_osfhandle(sys.stdout.fileno())
+		mode = ctypes.c_uint()
+		kernel32 = ctypes.windll.kernel32
+		if kernel32.GetConsoleMode(handle, ctypes.byref(mode)):
+			kernel32.SetConsoleMode(handle, mode.value | 0x0004)
+	except (AttributeError, OSError, ValueError):
+		pass
+
+
+def styled(text: str, color: str) -> str:
+	if not sys.stdout.isatty():
+		return text
+	return f"{color}{text}{RESET}"
+
+
+def make_prompt() -> str:
+	return f"{styled('PS', BLUE)} {styled(os.getcwd(), CYAN)}{styled('>', BLUE)} "
 
 
 class AuthenticationError(Exception):
@@ -43,7 +76,9 @@ def receive_output(reader: BinaryIO) -> None:
 	try:
 		for raw_line in reader:
 			line = raw_line.decode("utf-8", errors="replace")
-			if line.startswith(("OUT ", "ERR ")):
+			if line.startswith("ERR "):
+				print(styled(line[4:].rstrip("\r\n"), RED), flush=True)
+			elif line.startswith("OUT "):
 				print(line[4:], end="", flush=True)
 			else:
 				print(line, end="", flush=True)
@@ -61,12 +96,12 @@ def run_client(host: str, port: int) -> None:
 		try:
 			connection = connect_and_authenticate(host, port)
 			reader = connection.makefile("rb")
-			print(f"Connected to {host}:{port}. Enter :quit to disconnect.")
+			print(styled(f"Connected to {host}:{port}.", GREEN) + " Enter :quit to disconnect.")
 			threading.Thread(target=receive_output, args=(reader,), daemon=True).start()
 			retry_delay = 1.0
 
 			while True:
-				command = input("PS> ")
+				command = input(make_prompt())
 				connection.sendall((command + "\n").encode("utf-8"))
 				if command in {":quit", ":exit"}:
 					return
@@ -80,7 +115,8 @@ def run_client(host: str, port: int) -> None:
 					pass
 			return
 		except OSError as error:
-			print(f"HSS connection to {host}:{port} failed ({error}); retrying in {retry_delay:.0f}s.")
+			message = f"HSS connection to {host}:{port} failed ({error}); retrying in {retry_delay:.0f}s."
+			print(styled(message, YELLOW))
 			time.sleep(retry_delay)
 			retry_delay = min(retry_delay * 2, MAX_RETRY_DELAY)
 		finally:
@@ -91,6 +127,7 @@ def run_client(host: str, port: int) -> None:
 
 
 def main() -> None:
+	enable_terminal_colors()
 	parser = argparse.ArgumentParser(description="Open a PowerShell session through HSS")
 	parser.add_argument("host", nargs="?", help="IP address or hostname of the HSS server")
 	parser.add_argument("--port", type=int, default=DEFAULT_PORT, help="Server TCP port")
